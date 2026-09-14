@@ -1,44 +1,42 @@
-# context.md — 项目背景与决策记录
+# capnet
 
-## 目标
+让 agent 和代码用自家机器替代云 STT/OCR/视频 API:机器上的能力被一个 node 外壳暴露、注册到 hub,按能力动态发现并直连调用。
 
-把家里 RTX 4070 + Mac + 云服务器的空闲算力组成一个"能力共享网络":node 注册能力(STT/OCR/视频理解/视频生成),agent/CLI 发现并调用。**服务器只做发现,调用直连 node(P2P 风格)。**
+## Language
 
-## 决策记录(按时间)
+**Node**:
+一台机器上运行 `cap node start` 的进程,负责暴露能力、注册到 hub、心跳。
+_Avoid_: worker, agent
 
-1. **2026-09-13 选型**:弃 openOcto(Python,7★,单作者,只当架构参考)。底座选 **NATS JetStream + nats-micro**。A2A v1 作对外协议互通层(a2a-go/a2a-rs 含 server 实现)。
-2. **2026-09-14 网状拓扑**:最初设计每台机器一个 nats-server,leaf/hub 组网,任务经 hub work-queue。**实测打通**:本地 CLI → 本地 leaf → WS(经 Caddy :80)→ 云 hub → 云 cap-node → 结果回。云上只开 80 端口,leaf 被迫走 WebSocket。
-3. **2026-09-15 v0.4/v0.5 转向 P2P 直连**:
-   - 参考 **Tailscale**:控制面(发现)走服务器,数据面 node 直连。Tailscale 客户端 BSD-3 开源(Go),协调服务器闭源(开源替代 Headscale),DERP 中继开源。
-   - **v0.5 调用模型**:node 在自己 nats-server 上注册 micro 服务(端点=能力 rpc),CLI 经 mesh `$SRV.PING` 发现 `direct_addr`,直连 node `nc.Request("cap.<cap>.rpc")`。详见 `docs/design.md` §0.2。
-   - 传输层计划用 **Tailscale/tsnet**(直连打洞 + DERP 回退);流媒体:文件走对象存储,实时媒体走 WebRTC/LiveKit(已有基建)。
+**Capability**:
+node 对外提供的某个服务(如 `stt`、`ocr`、`video_gen`),由插件或转发两种方式提供。
+_Avoid_: tool(MCP 语境词,本上下文不用)
 
-## 架构现状(v0.3 已跑通, v0.5 待实现)
+**Plugin**:
+在 node 进程内用 Go 实现的能力(实现 `Capability` 接口),请求直接进代码、不经转发。
+_Avoid_: 内置脚本
 
-```
-[CLI]──发现($SRV.PING,经 mesh)──▶[hub 云服务器]◀──node 注册──[4070/node]
-   └──直连(node 本机 nats-server)──▶  cap.<cap>.rpc → 结果
-```
+**Forward**:
+node 把请求反向代理到本机已有的服务(如 faster-whisper server),capnet 只负责暴露与注册。
+_Avoid_: proxy 能力
 
-- 当前云上在跑的是 v0.3 模型(每能力一个 micro 服务 + hub JetStream work-queue),cloud-developer `/home/ubuntu/capnode/`。
-- v0.5 代码改造(每 node 一个服务 + rpc 端点 + CLI find/直连)尚未实现。
+**Hub(注册表)**:
+运行 nats-micro 的服务,收集各 node 注册的能力与心跳,供 `cap discover` 查询;负责死机剔除。
+_Avoid_: broker(与传输层混淆), server
 
-## 关键基础设施
+**Discover**:
+`cap discover <cap>`:查询 hub,返回当前活着的、提供该能力的 node 列表与 base_url。
 
-- **云端 hub**:cloud-developer(54.151.241.139),只开 22/80。nats-server v2.14.6(hub.conf, JetStream + websocket:8081 + leafnodes:7422)+ cap-node(node-node)。Caddy `/nats*` → ws 8081。
-- **本地**:Mac 跑 leaf nats-server(127.0.0.1:4222)拨云 hub(WS)。
-- **二进制产物**:capnode + cap,跨平台已编译(linux amd64/arm64、darwin arm64、windows amd64)。
+**Heartbeat**:
+node 每 15s 向 hub 续租的存活信号;TTL 60s 未续则从发现中剔除。
 
-## 待办
+**Self-hosted model API**:
+目标本身——现有调用云 API(Whisper/OCR)的代码改指自家机器即可,接口保持 OpenAI 兼容形状。
 
-- [ ] v0.5 实现(每 node 一个 micro 服务 + rpc 端点;CLI find/直连 call/--stream/submit-wait)
-- [ ] Tailscale auth key → 云上入网 + join 脚本(装 tailscale + cap-node + systemd)
-- [ ] 4070 真实模型(STT faster-whisper / OCR / video)
-- [ ] 消息流式(progress_subject)+ SSE 网关(cap serve)
-- [ ] NATS token 鉴权;对象存储接入
+**Tailscale**:
+连通层;给 NAT 内 node 可拨地址,agent/代码从任何地方直连。
 
-## 风险/注意
-
-- NAT 内 node 直连必须靠 Tailscale(或类似),否则只能经 hub 中转。
-- DERP 公共中继不适合大流量,兜底要自托管 DERP。
-- workqueue consumer 必须 DeliverAll;micro 发现要 PublishRequest。
+_Avoid_(旧框架废弃词):
+- capability network / 能力共享网络(旧目标,已收敛为"自托管模型 API")
+- work-queue / task orchestration / 多 GPU 编排(明确不做)
+- MCP(不是调用主干;仅未来可选适配)
