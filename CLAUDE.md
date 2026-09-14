@@ -31,7 +31,22 @@ cap nodes                           # 列出全网 node 与能力
 - 直连依赖 Tailscale:node 必须暴露在 tailnet 地址上,否则 NAT 内不可达。
 - CLI 与 node 同一二进制,子命令区分角色;不要拆成两个二进制。
 
+## Agent skills
+
+### Issue tracker
+
+本地 markdown:`.scratch/<feature-slug>/`(spec + issues,逐 ticket 一个文件)。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+默认五个标准标签(needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix)。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+single-context:根 `CONTEXT.md` + `docs/adr/`。See `docs/agents/domain.md`.
+
 ## 状态
 
 - [x] 设计定稿(ADR-0001)+ 术语表(CONTEXT.md)
-- [ ] to-spec 拆 spec → to-tickets → 实现(旧模型代码已清除)
+- [x] spec 已落本地 `.scratch/capnet-core/spec.md`
+- [ ] to-tickets 拆票 → 实现(旧模型代码已清除)
