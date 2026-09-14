@@ -12,3 +12,9 @@ type Capability interface {
 	// HandleHTTP 处理对该能力的调用(POST /cap/<name>,body 为任务 JSON)。
 	HandleHTTP(w http.ResponseWriter, r *http.Request)
 }
+
+// capMeta 是注册记录里单个能力的元数据(name + JSON Schema)。
+type capMeta struct {
+	Name   string `json:"name"`
+	Schema string `json:"schema"`
+}

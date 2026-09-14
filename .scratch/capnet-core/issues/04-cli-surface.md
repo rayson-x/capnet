@@ -4,10 +4,16 @@
 
 **Blocked by:** 01 (最小垂直闭环)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `cap nodes` 列出全网 node + 能力
-- [ ] `cap node status` 显示本机注册状态(便于本地调试)
-- [ ] `cap discover <cap>` 返回结果含每个能力的 JSON Schema
-- [ ] `cap call` 按 schema 校验入参,非法入参给出清晰错误
-- [ ] 系统测试覆盖上述命令输出
+## Answer
+
+2026-09-15 完成。
+
+- `cap nodes` 列全网 node + 能力。
+- `cap node status` 显示本机在 hub 的注册状态(读本地配置的 node_id,过滤发现结果)。
+- `cap discover <cap>` 返回含每个能力的 JSON Schema。
+- `cap call` 按能力 schema 校验入参(santhosh-tekuri/jsonschema),非法入参给清晰错误(如 `missing properties: 'who'`)。
+- 测试:`TestValidateAgainstSchema`(合法通过 / 缺字段失败 / 类型错误失败 / 空 schema 跳过)。通过。
+
+注:`cap node status` 需能读到本地 capabilities.yaml(用 `CAP_CONFIG` 指定或 cwd 有该文件)才知道 node_id。

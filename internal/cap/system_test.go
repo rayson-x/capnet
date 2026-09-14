@@ -10,8 +10,12 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// startHub 起一个内嵌真实 nats-server 作为 hub 注册表(hub = 纯发现,无代理)。
+// startHub 起一个内嵌真实 nats-server 作为 hub,并跑注册表服务(纯发现,无代理)。
 func startHub(t *testing.T) *nats.Conn {
+	return startHubTTL(t, 60*time.Second)
+}
+
+func startHubTTL(t *testing.T, ttl time.Duration) *nats.Conn {
 	t.Helper()
 	srv, err := server.NewServer(&server.Options{Host: "127.0.0.1", Port: -1})
 	if err != nil {
@@ -28,6 +32,9 @@ func startHub(t *testing.T) *nats.Conn {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(nc.Close)
+	if _, err := RunRegistry(nc, ttl, 300*time.Millisecond); err != nil {
+		t.Fatalf("run registry: %v", err)
+	}
 	return nc
 }
 

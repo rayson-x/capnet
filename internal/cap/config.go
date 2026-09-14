@@ -9,9 +9,11 @@ import (
 
 // Config 是 node 的能力配置表:加一条能力 = 加一个条目。
 type Config struct {
-	NodeID       string      `yaml:"node_id"`
-	Listen       string      `yaml:"listen"` // 如 127.0.0.1:8080 或 tailnet 地址;空 = 随机端口
-	Capabilities []CapConfig `yaml:"capabilities"`
+	NodeID           string      `yaml:"node_id"`
+	Listen           string      `yaml:"listen"` // 如 127.0.0.1:8080 或 tailnet 地址;空 = 随机端口
+	HeartbeatInterval int        `yaml:"heartbeat_interval"` // 秒,默认 15
+	HealthInterval   int        `yaml:"health_interval"`    // 秒,默认 10
+	Capabilities     []CapConfig `yaml:"capabilities"`
 }
 
 type CapConfig struct {

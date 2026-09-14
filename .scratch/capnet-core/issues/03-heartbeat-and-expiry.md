@@ -4,10 +4,13 @@
 
 **Blocked by:** 01 (最小垂直闭环)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Node 心跳 15s;hub 注册表 TTL 60s 过期剔除
-- [ ] 停掉心跳后,~60s 内该 node 从 `cap discover` 消失
-- [ ] 新启动的 node 自动出现在 `cap discover`
-- [ ] 能力健康变化时注册记录被更新
-- [ ] 系统测试:心跳停 → 消失;新 node → 出现
+## Answer
+
+2026-09-15 完成。
+
+- 新增 hub 注册表服务(`cap hub`,`internal/cap/registry.go`):`cap.reg.set`(注册,回 ack 确认)、`cap.reg.hb.<node>`(心跳续租)、`cap.reg.list`(发现),TTL 过期剔除(sweep)。
+- Node 心跳(默认 15s,`HeartbeatInterval` 可配)+ 健康重查(默认 10s,转发能力变化时重新注册)。
+- 发现从 `$SRV.PING`(nats-micro)迁移到 `cap.reg.list`——注册表才有 TTL/lease 语义,满足动态剔除。
+- 系统测试:`TestSystem_HeartbeatExpiry`(停心跳→TTL 内消失)、`TestSystem_NewNodeAppears`(新 node→出现)、`TestSystem_ForwardHealthChange`(本地模型挂→能力剔除)。全部通过。
