@@ -11,6 +11,7 @@ import (
 type Config struct {
 	NodeID            string      `yaml:"node_id"`
 	Listen            string      `yaml:"listen"`             // 如 127.0.0.1:8080 或 tailnet 地址;空 = 随机端口
+	BaseURL           string      `yaml:"base_url"`           // 广告给调用方的地址;空 = 从 listener 推导
 	HeartbeatInterval int         `yaml:"heartbeat_interval"` // 秒,默认 15
 	HealthInterval    int         `yaml:"health_interval"`    // 秒,默认 10
 	Capabilities      []CapConfig `yaml:"capabilities"`

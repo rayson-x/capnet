@@ -2,16 +2,19 @@ package cap
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"tailscale.com/tsnet"
 )
 
 // Node 是每台机器上的可扩展外壳:把能力暴露成 HTTP 服务,注册到 hub(心跳续租)。
@@ -24,6 +27,7 @@ type Node struct {
 	nc         *nats.Conn
 	baseURL    string
 	ln         net.Listener
+	extraClose func() // tsnet 等额外资源的关闭
 	mu         sync.Mutex
 	handlers   map[string]http.Handler // 能力名 -> handler(动态,随健康变化)
 	registered []capMeta
@@ -48,12 +52,15 @@ func StartNode(nc *nats.Conn, cfg Config, caps map[string]Capability) (*Node, er
 		w.WriteHeader(http.StatusOK)
 	})
 
-	ln, err := net.Listen("tcp", cfg.Listen)
+	ln, err := n.listen()
 	if err != nil {
 		return nil, err
 	}
 	n.ln = ln
 	n.baseURL = "http://" + ln.Addr().String()
+	if cfg.BaseURL != "" {
+		n.baseURL = cfg.BaseURL // 显式广告地址(如经反代可达的 URL)
+	}
 	go http.Serve(ln, mux)
 
 	// ② 注册 + 心跳 + 健康重查
@@ -226,6 +233,53 @@ func (n *Node) Stop() {
 	if n.ln != nil {
 		n.ln.Close()
 	}
+	if n.extraClose != nil {
+		n.extraClose()
+	}
+}
+
+// listen 决定 node 监听在哪:
+//   - 设了 TS_AUTHKEY → 用 tsnet 内嵌 tailscale,在 tailnet IP 上监听("node 自带 tailscale",无需单独装)。
+//   - 否则 → 本地 net.Listen(cfg.Listen)。
+func (n *Node) listen() (net.Listener, error) {
+	authKey := os.Getenv("TS_AUTHKEY")
+	if authKey != "" {
+		srv := &tsnet.Server{
+			Hostname:   sanitizeHostname("cap-" + n.cfg.NodeID),
+			AuthKey:    authKey,
+			ControlURL: os.Getenv("TS_CONTROL_URL"), // 空 = tailscale.com;自托管用 Headscale 填这里
+		}
+		ln, err := srv.Listen("tcp", ":0") // tailnet IP 上的随机端口
+		if err != nil {
+			return nil, fmt.Errorf("tsnet listen: %w", err)
+		}
+		n.extraClose = func() { _ = srv.Close() }
+		log.Printf("node [%s] joined tailnet via tsnet, listening on %s", n.cfg.NodeID, ln.Addr())
+		return ln, nil
+	}
+	ln, err := net.Listen("tcp", n.cfg.Listen)
+	if err != nil {
+		return nil, err
+	}
+	return ln, nil
+}
+
+// sanitizeHostname 把 node_id 转成合法 tailscale hostname(字母/数字/横线)。
+func sanitizeHostname(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "capnode"
+	}
+	return out
 }
 
 // probeOK 探活本机服务:probe 为空视为健康;否则 GET local-base+probe 期望 2xx。

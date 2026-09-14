@@ -1,0 +1,11 @@
+# cloud-developer 上的 node(供本地 CLI 实测:发现 + 直连调用)
+node_id: cloud-node
+listen: "127.0.0.1:9001"
+base_url: "http://54.151.241.139/capnode" # 经 Caddy /capnode 反代可达
+heartbeat_interval: 15
+health_interval: 10
+
+capabilities:
+  - name: hello
+    kind: plugin
+    schema: '{"type":"object","properties":{"who":{"type":"string"}},"required":["who"]}'
