@@ -1,0 +1,32 @@
+name: Release
+
+# 推 v* tag 时:交叉编译全平台 cap 二进制并创建 GitHub Release(自动绕过本地权限)。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile all platforms
+        run: |
+          mkdir -p dist
+          for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
+            out="dist/cap-${p%/*}-${p#*/}"
+            [ "${p#*/}" = "amd64" ] && [ "${p%/*}" = "windows" ] && out="${out}.exe"
+            GOOS=${p%/*} GOARCH=${p#*/} go build -ldflags="-s -w" -o "$out" ./cmd/cap
+          done
+          ls -la dist/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
