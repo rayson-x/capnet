@@ -48,3 +48,17 @@ CONFIG=configs/capabilities.yaml ./capnode           # 一个 node
 - [ ] 真实能力(4070 STT/OCR/video)
 
 测试环境:云端 hub 在 cloud-developer,当前跑的是旧模型(node 注册 + JetStream work-queue),配置在 `/home/ubuntu/capnode/`。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues via the `gh` CLI(repo `rayson-x/capnet`)。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+默认五个标准标签(needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix)。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+single-context:根 `CONTEXT.md` + `docs/adr/`。See `docs/agents/domain.md`。
