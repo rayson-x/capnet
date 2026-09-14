@@ -43,8 +43,8 @@ hub 注册表用 nats-micro:node 注册 `{node_id, capability, base_url, schema}
 - **Node 配置**(`capabilities.yaml`):`{name, kind: plugin|forward, local(forward 用), probe, schema}`。
 - **插件**:进程内 Go 实现 `Capability`,编译进 `cap`。
 - **转发**:node 反向代理到 `local`;探活(`probe`)通过才注册;透传流式(SSE/WS/分块,不缓冲)。
-- **Hub**:nats-micro 注册表服务。node 注册一个服务(name = node_id),能力列表放 metadata(含 base_url + schema)。
-- **发现**:`cap discover <cap>` → `$SRV.PING`(**必须 PublishRequest 带 reply**)→ 过滤能力 → 返回活的 node `{base_url, schema}`。
+- **Hub**:`cap hub` 注册表服务(自研 cap.reg.* 主题,带 TTL/lease 语义;nats-micro 的 PING 无 TTL,故未采用)。node 注册 `{node_id, base_url, capabilities[]}`,每次心跳重发 set(保证 hub 重启后节点重新出现)。
+- **发现**:`cap discover <cap>` → 请求 `cap.reg.list` → 返回活的 node `{base_url, schema}`。
 - **心跳**:15s 间隔,TTL 60s,hub 过期剔除。
 - **暴露**:每个能力一个 `<tailnet-ip>:<port>` URL;调用直连 HTTP,注册表不代理流量。
 - **连通**:Tailscale(前提:NAT 内 node 才有可拨地址)。

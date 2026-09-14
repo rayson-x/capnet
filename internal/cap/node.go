@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +24,8 @@ type Node struct {
 	nc         *nats.Conn
 	baseURL    string
 	ln         net.Listener
-	forward    map[string]string // 能力名 -> local 地址(转发)
-	mu         *sync.Mutex
+	mu         sync.Mutex
+	handlers   map[string]http.Handler // 能力名 -> handler(动态,随健康变化)
 	registered []capMeta
 	done       chan struct{}
 }
@@ -32,19 +33,21 @@ type Node struct {
 // StartNode 启动 node:① 起 HTTP 服务暴露每个能力(POST /cap/<name>)② 注册到 hub + 心跳。
 func StartNode(nc *nats.Conn, cfg Config, caps map[string]Capability) (*Node, error) {
 	n := &Node{
-		cfg:     cfg,
-		caps:    caps,
-		nc:      nc,
-		forward: map[string]string{},
-		mu:      &sync.Mutex{},
-		done:    make(chan struct{}),
+		cfg:      cfg,
+		caps:     caps,
+		nc:       nc,
+		handlers: map[string]http.Handler{},
+		done:     make(chan struct{}),
 	}
+	n.recompute() // 初始 handlers + metas
 
-	// ① HTTP 服务
-	mux, err := n.buildMux()
-	if err != nil {
-		return nil, err
-	}
+	// ① HTTP 服务:统一分发 /cap/<name> → 动态查 handler
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cap/", n.dispatchCapability)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return nil, err
@@ -62,37 +65,54 @@ func StartNode(nc *nats.Conn, cfg Config, caps map[string]Capability) (*Node, er
 	return n, nil
 }
 
-// buildMux 组装能力 handler:插件直接实现;转发探活通过才挂载。
-func (n *Node) buildMux() (*http.ServeMux, error) {
-	mux := http.NewServeMux()
+// dispatchCapability 按能力名查动态 handler;无则 404。
+func (n *Node) dispatchCapability(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/cap/")
+	if name == "" {
+		http.NotFound(w, r)
+		return
+	}
+	n.mu.Lock()
+	h := n.handlers[name]
+	n.mu.Unlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	h.ServeHTTP(w, r)
+}
+
+// recompute 依据当前健康状态重算 handlers(插件恒在;转发探活通过才挂载)与注册 metas。
+func (n *Node) recompute() (handlers map[string]http.Handler, metas []capMeta) {
+	handlers = map[string]http.Handler{}
+	var out []capMeta
+
 	for name, impl := range n.caps {
 		c := impl
-		mux.HandleFunc("/cap/"+name, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
+		handlers[name] = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c.HandleHTTP(w, r)
 		})
+		out = append(out, capMeta{Name: name, Schema: impl.Schema()})
 	}
 	for _, cc := range n.cfg.Capabilities {
 		if cc.Kind != "forward" {
 			continue
 		}
-		if _, exists := n.caps[cc.Name]; exists {
+		if _, isPlugin := n.caps[cc.Name]; isPlugin {
 			continue
 		}
 		if !probeOK(cc.Local, cc.Probe) {
-			log.Printf("capability [%s] probe failed, skipping", cc.Name)
-			continue
+			continue // 当前不健康,不挂载不注册
 		}
 		target, err := url.Parse(cc.Local)
 		if err != nil {
 			log.Printf("capability [%s] bad local %q: %v; skipping", cc.Name, cc.Local, err)
 			continue
 		}
-		n.forward[cc.Name] = cc.Local
-		name := cc.Name
 		proxy := &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
 				pr.Out.URL.Scheme = target.Scheme
@@ -102,44 +122,26 @@ func (n *Node) buildMux() (*http.ServeMux, error) {
 				pr.Out.URL.RawQuery = target.RawQuery
 			},
 		}
-		mux.HandleFunc("/cap/"+name, func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			proxy.ServeHTTP(w, r)
-		})
+		handlers[cc.Name] = proxy
+		out = append(out, capMeta{Name: cc.Name, Schema: cc.Schema})
 	}
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	return mux, nil
+	n.mu.Lock()
+	n.handlers = handlers
+	n.registered = out
+	n.mu.Unlock()
+	return handlers, out
 }
 
-// currentMetas 计算当前应注册的能力列表(插件恒在;转发按当前探活)。
-func (n *Node) currentMetas() []capMeta {
-	var metas []capMeta
-	for name, impl := range n.caps {
-		metas = append(metas, capMeta{Name: name, Schema: impl.Schema()})
-	}
-	for _, cc := range n.cfg.Capabilities {
-		if cc.Kind != "forward" {
-			continue
-		}
-		if _, exists := n.caps[cc.Name]; exists {
-			continue
-		}
-		if !probeOK(cc.Local, cc.Probe) {
-			continue // 当前不健康,不注册
-		}
-		metas = append(metas, capMeta{Name: cc.Name, Schema: cc.Schema})
-	}
-	return metas
+func (n *Node) republish() {
+	_, metas := n.recompute()
+	reg := registryEntry{NodeID: n.cfg.NodeID, BaseURL: n.baseURL, Capabilities: metas}
+	b, _ := json.Marshal(reg)
+	_ = n.nc.Publish("cap.reg.set", b)
 }
 
 // republishSync 注册并等 registry ack(启动时用,确保注册完成才返回)。
 func (n *Node) republishSync() {
-	metas := n.currentMetas()
+	_, metas := n.recompute()
 	reg := registryEntry{NodeID: n.cfg.NodeID, BaseURL: n.baseURL, Capabilities: metas}
 	b, _ := json.Marshal(reg)
 	_, _ = n.nc.Request("cap.reg.set", b, 2*time.Second)
@@ -148,24 +150,7 @@ func (n *Node) republishSync() {
 	n.mu.Unlock()
 }
 
-// republish 注册(健康重查用,fire-and-forget,ack 不阻塞)。
-func (n *Node) republish() {
-	metas := n.currentMetas()
-	reg := registryEntry{NodeID: n.cfg.NodeID, BaseURL: n.baseURL, Capabilities: metas}
-	b, _ := json.Marshal(reg)
-	_ = n.nc.Publish("cap.reg.set", b)
-	n.mu.Lock()
-	n.registered = metas
-	n.mu.Unlock()
-}
-
-func (n *Node) registeredJSON() string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	b, _ := json.Marshal(n.registered)
-	return string(b)
-}
-
+// heartbeatLoop 每间隔重发注册(含 set):既续租,又保证 hub 重启后能重新出现。
 func (n *Node) heartbeatLoop() {
 	interval := time.Duration(n.cfg.HeartbeatInterval) * time.Second
 	if interval <= 0 {
@@ -176,14 +161,14 @@ func (n *Node) heartbeatLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			_ = n.nc.Publish("cap.reg.hb."+n.cfg.NodeID, []byte("hb"))
+			n.republish()
 		case <-n.done:
 			return
 		}
 	}
 }
 
-// healthLoop 周期重查转发能力健康;集合变化时重新注册。
+// healthLoop 周期重查转发能力健康;handlers 或注册集合变化时同步更新(先死后活恢复)。
 func (n *Node) healthLoop() {
 	interval := time.Duration(n.cfg.HealthInterval) * time.Second
 	if interval <= 0 {
@@ -197,7 +182,7 @@ func (n *Node) healthLoop() {
 			n.mu.Lock()
 			old := n.registered
 			n.mu.Unlock()
-			cur := n.currentMetas()
+			_, cur := n.recompute()
 			if !metasEqual(old, cur) {
 				log.Printf("node [%s] capabilities changed, re-registering", n.cfg.NodeID)
 				n.republish()
@@ -212,17 +197,24 @@ func metasEqual(a, b []capMeta) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	// 顺序无关比较
 	am := map[string]capMeta{}
 	for _, m := range a {
 		am[m.Name] = m
 	}
 	for _, m := range b {
-		if am[m.Name].Name != m.Name || am[m.Name].Schema != m.Schema {
+		cur, ok := am[m.Name]
+		if !ok || cur.Schema != m.Schema {
 			return false
 		}
 	}
 	return true
+}
+
+func (n *Node) registeredJSON() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	b, _ := json.Marshal(n.registered)
+	return string(b)
 }
 
 // BaseURL 返回该 node 的对外可达地址(调用方直连用)。

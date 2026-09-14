@@ -21,7 +21,7 @@ node 把请求反向代理到本机已有的服务(如 faster-whisper server),ca
 _Avoid_: proxy 能力
 
 **Hub(注册表)**:
-运行 nats-micro 的服务,收集各 node 注册的能力与心跳,供 `cap discover` 查询;负责死机剔除。
+运行 `cap hub` 的服务,收集各 node 注册的能力与心跳(`cap.reg.*` 主题),供 `cap discover` 查询;TTL 未续则剔除死机节点。
 _Avoid_: broker(与传输层混淆), server
 
 **Discover**:

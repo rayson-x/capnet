@@ -49,7 +49,7 @@ func RunRegistry(nc *nats.Conn, ttl, sweep time.Duration) (*Registry, error) {
 		return nil, err
 	}
 
-	// 心跳续租
+	// 心跳续租(兼容:node 每次心跳也会重发 cap.reg.set,set 自带续租)
 	if _, err := nc.Subscribe("cap.reg.hb.>", func(m *nats.Msg) {
 		id := m.Subject[len("cap.reg.hb."):]
 		r.mu.Lock()

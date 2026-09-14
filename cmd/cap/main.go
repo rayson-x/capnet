@@ -73,11 +73,13 @@ func hubCmd() {
 
 func usage() {
 	fmt.Println(`usage: cap <command>
+  hub                  运行 hub 动态注册表(心跳 TTL 60s 剔除)
   node start           启动 node 外壳(读 capabilities.yaml)
+  node status          显示本机 node 在 hub 的注册状态
   discover <capability> 查 hub,返回活的 node + base_url + schema
-  call <capability> '<json>'  直连调用能力
+  call <capability> '<json>'  直连调用能力(按 schema 校验入参)
   nodes                列出全网 node 与能力
-env: CAP_HUB_URL(默认 nats://127.0.0.1:4222)`)
+env: CAP_HUB_URL(默认 nats://127.0.0.1:4222), CAP_CONFIG(默认 capabilities.yaml)`)
 }
 
 func nodeCmd(args []string) {

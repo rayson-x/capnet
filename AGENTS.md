@@ -6,16 +6,19 @@ capnet = 自托管模型 API + 动态注册表。一个 `cap` 二进制:node 外
 
 设计权威: `docs/adr/0001-self-hosted-model-api.md` + `CONTEXT.md`。**改设计先改 ADR/术语表,再改代码。**
 
-## 代码布局(实现后)
+## 代码布局
 
 ```
-cmd/cap/                  单二进制(cap)
-  main.go                 CLI 分发:node/discover/call/nodes
-  node/                   node 外壳:读配置、探活、注册、心跳、暴露
-  capability.go           Capability 接口
-  plugin.go               插件:进程内实现能力
-  forward.go              转发:反向代理本机已有服务
-  registry.go             hub 侧 nats-micro 注册/发现逻辑
+cmd/cap/main.go          单二进制 CLI 分发:hub / node start|status / discover / call / nodes
+internal/cap/
+  capabilities.go        Capability 接口 + capMeta(能力元数据)
+  config.go              capabilities.yaml 加载
+  node.go                node 外壳:读配置、探活、注册、心跳、健康重查、HTTP 暴露
+  plugins.go             内置插件工厂(hello)
+  registry.go            hub 侧注册表服务(cap.reg.set/hb/list + TTL 剔除)
+  discover.go            发现(cap.reg.list)
+  call.go                直连调用
+  validate.go            schema 校验
 configs/capabilities.yaml 能力配置表(kind: plugin|forward)
 ```
 
@@ -37,12 +40,19 @@ capabilities:
 ```go
 type Capability interface {
     Name() string
-    Schema() string       // JSON Schema(OpenAI 兼容工具形状)
-    ServeHTTP(w, r)       // 或 Process(ctx, input) — 插件对外是 HTTP
+    Schema() string           // JSON Schema(OpenAI 兼容工具形状)
+    HandleHTTP(w, r)          // 插件对外是 HTTP handler,请求直接进代码
 }
 ```
 
-插件 = 进程内 HTTP handler,直接实现逻辑;转发 = 配置驱动,node 代理到 `local`。
+插件 = 进程内 HTTP handler,直接实现逻辑;转发 = 配置驱动,node 反向代理到 `local`。
+
+## 注册表协议(cap hub)
+
+- `cap.reg.set`:node 注册/更新能力(registry 回 ack,node 等确认)
+- `cap.reg.hb.<node>`:心跳续租(兼容)
+- `cap.reg.list`:发现(请求-响应,返回未过期条目)
+- node 每次心跳重发 `cap.reg.set`(保证 hub 重启后能重新出现);TTL 60s 过期剔除
 
 ## 约定
 

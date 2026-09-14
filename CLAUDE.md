@@ -1,6 +1,6 @@
 # capnet — 自托管模型 API + 动态注册表
 
-一个 `cap` 二进制:启动可扩展 node 外壳,把机器能力注册到 hub,agent/代码动态发现并直连调用。Go + NATS(nats-micro)。
+一个 `cap` 二进制:启动可扩展 node 外壳,把机器能力注册到 hub,agent/代码动态发现并直连调用。Go + NATS。
 
 ## 设计(ADR-0001)
 
@@ -8,8 +8,8 @@
 - **node 外壳**:`cap node start`,两种能力提供:
   - **插件**:进程内 Go 实现 `Capability` 接口,请求直接进代码,不转发。
   - **转发**:反向代理本机已有服务(local 地址 → tailnet URL),capnet 只暴露/注册。
-- **hub 注册表**:nats-micro 服务,收集 node 能力 + 心跳 15s / TTL 60s 剔除。
-- **发现**:`cap discover <cap>` 查 hub,返回活的 node + base_url + schema。
+- **hub 注册表**:`cap hub` 服务(cap.reg.set/hb/list 主题),node 心跳重发 set,TTL 60s 过期剔除。
+- **发现**:`cap discover <cap>` 请求 `cap.reg.list`,返回活的 node + base_url + schema(注册表只做发现,不代理流量)。
 - **连通**:Tailscale;调用直连 node 的 HTTP API,注册表不代理流量。
 - **不做**:多 GPU 编排/任务队列/MCP 主干(仅未来可选适配)。
 

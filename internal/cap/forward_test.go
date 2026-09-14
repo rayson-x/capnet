@@ -5,12 +5,77 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestSystem_Forward_RecoversAfterStart:本地服务"先死后活"——
+// node 启动时探活失败(不挂载/不注册),服务恢复健康后 handler 与注册一起恢复,调用不再 404。
+func TestSystem_Forward_RecoversAfterStart(t *testing.T) {
+	hub := startHub(t)
+
+	// 预留端口但先不 serve:node 起来时探活失败
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	cfg := Config{
+		NodeID:         "rec-node",
+		Listen:         "127.0.0.1:0",
+		HealthInterval: 1,
+		Capabilities: []CapConfig{{
+			Name: "stt", Kind: "forward",
+			Local: "http://" + addr + "/v1/x", Probe: "/health",
+		}},
+	}
+	node, err := StartNode(hub, cfg, nil)
+	if err != nil {
+		t.Fatalf("start node: %v", err)
+	}
+	defer node.Stop()
+
+	// 启动时探活失败 → 未注册
+	infos, err := Discover(hub, "stt", 2*time.Second)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if len(infos) != 0 {
+		t.Fatalf("down service should not be registered, got %+v", infos)
+	}
+
+	// 服务恢复:在预留端口上 serve 一个 /health + /v1/x handler
+	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		fmt.Fprintf(w, `{"ok":true,"path":%q}`, r.URL.Path)
+	}))
+
+	// 等健康重查(1s)+ 余量
+	time.Sleep(4 * time.Second)
+
+	// 恢复后:注册了,且调用不再是 404
+	infos, err = Discover(hub, "stt", 2*time.Second)
+	if err != nil {
+		t.Fatalf("discover after recover: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("recovered service should be registered, got %+v", infos)
+	}
+	body, err := Call(context.Background(), infos[0], []byte("x"))
+	if err != nil {
+		t.Fatalf("call after recover: %v", err)
+	}
+	if !strings.Contains(string(body), `"ok":true`) {
+		t.Errorf("want proxied response, got %q", body)
+	}
+}
 
 // fakeModel 模拟本机已有的模型服务(faster-whisper 之类)。
 type fakeModel struct {
