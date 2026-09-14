@@ -20,11 +20,11 @@ type registryEntry struct {
 // Registry 是 hub 侧动态注册表:node 注册 + 心跳续租,TTL 未续则过期剔除。
 // 只做发现,不代理流量。
 type Registry struct {
-	nc       *nats.Conn
-	ttl      time.Duration
-	sweep    time.Duration
-	mu       sync.Mutex
-	entries  map[string]*registryEntry
+	nc      *nats.Conn
+	ttl     time.Duration
+	sweep   time.Duration
+	mu      sync.Mutex
+	entries map[string]*registryEntry
 }
 
 // RunRegistry 启动注册表服务(hub 侧,连 nats-server)。
