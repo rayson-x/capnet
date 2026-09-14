@@ -1,0 +1,17 @@
+# capnet node 能力配置:加一条 = 加一个能力
+#   kind: plugin  进程内 Go 实现(在 internal/cap/plugins.go 注册)
+#   kind: forward 转发到本机已有服务(local 地址),见 ticket 02
+node_id: mynode
+listen: "127.0.0.1:0"
+
+capabilities:
+  - name: hello
+    kind: plugin
+    schema: '{"type":"object","properties":{"who":{"type":"string"}},"required":["who"]}'
+
+  # 真实模型接入示例(等 faster-whisper 起来后启用,见 ticket 05)
+  # - name: stt
+  #   kind: forward
+  #   local: "http://127.0.0.1:9000/v1/audio/transcriptions"
+  #   probe: "/health"
+  #   schema: '{"type":"object","properties":{"audio":{"type":"string"}}}'
